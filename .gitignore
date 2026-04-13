@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.pycache/
+
+.DS_Store
+
+hw5_data_train.parquet
