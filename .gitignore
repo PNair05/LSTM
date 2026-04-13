@@ -3,5 +3,3 @@ __pycache__/
 .pycache/
 
 .DS_Store
-
-hw5_data_train.parquet
