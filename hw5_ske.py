@@ -2,6 +2,7 @@ import html
 import math
 import re
 import string
+import sys
 
 import numpy as np
 import pandas as pd
@@ -192,10 +193,20 @@ class LSTM(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.fc = nn.Linear(hidden_dim * (2 if bidirectional else 1), output_dim)
         self.bidirectional = bidirectional
+        self.pad_idx = pad_idx
 
     def forward(self, text):
         embedded = self.dropout(self.embedding(text))
-        _, (hidden, _) = self.lstm(embedded)
+        lengths = text.ne(self.pad_idx).sum(dim=1).cpu()
+        lengths = torch.clamp(lengths, min=1)
+
+        packed = nn.utils.rnn.pack_padded_sequence(
+            embedded,
+            lengths,
+            batch_first=True,
+            enforce_sorted=False,
+        )
+        _, (hidden, _) = self.lstm(packed)
 
         if self.bidirectional:
             hidden = torch.cat((hidden[-2], hidden[-1]), dim=1)
@@ -468,48 +479,72 @@ def evaluate(model, iterator, criterion, device, model_type="lstm"):
     return average_loss, accuracy
 
 
+def build_model(model_type, vocab, device):
+    if model_type == "transformer":
+        model = TransformerEncoder(
+            vocab_size=vocab.size,
+            embedding_dim=EMBEDDING_DIM,
+            hidden_dim=HIDDEN_DIM,
+            num_layers=NUM_LAYERS,
+            dropout=DROPOUT,
+            pad_idx=vocab.word2idx["<pad>"],
+        )
+    else:
+        model = LSTM(
+            vocab_size=vocab.size,
+            embedding_dim=EMBEDDING_DIM,
+            hidden_dim=HIDDEN_DIM,
+            num_layers=NUM_LAYERS,
+            dropout=DROPOUT,
+            pad_idx=vocab.word2idx["<pad>"],
+        )
+
+    return model.to(device)
+
+
 def main():
     torch.manual_seed(SEED)
     np.random.seed(SEED)
 
     data_path = "hw5_data_train.parquet"
     device = require_gpu_device()
-    model_type = "lstm"
+    model_type = sys.argv[1].strip().lower() if len(sys.argv) > 1 else "lstm"
+    if model_type not in {"lstm", "transformer"}:
+        raise ValueError("model_type must be 'lstm' or 'transformer'. Example: python3 hw5_ske.py lstm")
+
+    checkpoint_path = "transformer.pt" if model_type == "transformer" else "lstm.pt"
 
     print(f"Using device: {device}")
     train_loader, vocab = load_and_preprocess_data(data_path, data_type="train", model_type=model_type)
-    test_loader = load_and_preprocess_data(
+    valid_loader = load_and_preprocess_data(
         data_path,
-        data_type="test",
+        data_type="valid",
         model_type=model_type,
         shared_vocab=vocab,
     )
 
-    model = LSTM(
-        vocab_size=vocab.size,
-        embedding_dim=EMBEDDING_DIM,
-        hidden_dim=HIDDEN_DIM,
-        num_layers=NUM_LAYERS,
-        dropout=DROPOUT,
-        pad_idx=vocab.word2idx["<pad>"],
-    ).to(device)
+    model = build_model(model_type, vocab, device)
 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.BCEWithLogitsLoss()
 
-    best_test_accuracy = 0.0
+    best_valid_accuracy = 0.0
     for epoch in range(NUM_EPOCHS):
         train_loss, train_accuracy = train(model, train_loader, optimizer, criterion, device, model_type=model_type)
-        test_loss, test_accuracy = evaluate(model, test_loader, criterion, device, model_type=model_type)
+        valid_loss, valid_accuracy = evaluate(model, valid_loader, criterion, device, model_type=model_type)
 
-        best_test_accuracy = max(best_test_accuracy, test_accuracy)
+        if valid_accuracy > best_valid_accuracy:
+            best_valid_accuracy = valid_accuracy
+            torch.save(model.state_dict(), checkpoint_path)
+
         print(
             f"Epoch {epoch + 1}/{NUM_EPOCHS} | "
             f"Train Loss: {train_loss:.4f} | Train Acc: {train_accuracy:.4f} | "
-            f"Test Loss: {test_loss:.4f} | Test Acc: {test_accuracy:.4f}"
+            f"Valid Loss: {valid_loss:.4f} | Valid Acc: {valid_accuracy:.4f}"
         )
 
-    print(f"Best test accuracy: {best_test_accuracy:.4f}")
+    print(f"Best valid accuracy: {best_valid_accuracy:.4f}")
+    print(f"Saved best {model_type} checkpoint to {checkpoint_path}")
 
 
 if __name__ == "__main__":
