@@ -43,6 +43,13 @@ TRANSFORMER_WEIGHT_DECAY = 1e-4
 TRANSFORMER_EPOCHS = 14
 
 
+def normalize_model_type(model_type):
+    value = str(model_type).strip().lower()
+    if value in {"transformer", "transformerencoder", "transformer_encoder"}:
+        return "transformer"
+    return "lstm"
+
+
 def get_runtime_device():
     """
     Pick the best available execution device.
@@ -125,6 +132,7 @@ class Vocabulary:
             self.size += 1
 
     def text_to_indices(self, tokens, max_len, model_type="lstm"):
+        model_type = normalize_model_type(model_type)
         if model_type == "transformer":
             # Match the skeleton note by skipping OOV tokens for the transformer path.
             indices = [self.word2idx["<cls>"]]
@@ -150,7 +158,7 @@ class IMDBDataset(Dataset):
         self.vocabulary = vocabulary
         self.max_len = max_len
         self.is_training = is_training
-        self.model_type = model_type
+        self.model_type = normalize_model_type(model_type)
         self.texts = dataframe["text"].tolist()
         self.labels = dataframe["label"].tolist() if "label" in dataframe.columns else None
 
@@ -201,7 +209,13 @@ class LSTM(nn.Module):
         self.bidirectional = bidirectional
         self.pad_idx = pad_idx
 
-    def forward(self, text):
+    def forward(self, text=None, input_ids=None, attention_mask=None):
+        if text is None:
+            text = input_ids
+        if text is None:
+            raise ValueError("LSTM.forward expected `text` or `input_ids`.")
+        if text.dim() == 0:
+            text = text.unsqueeze(0)
         if text.dim() == 1:
             text = text.unsqueeze(0)
 
@@ -223,7 +237,7 @@ class LSTM(nn.Module):
             hidden = hidden[-1]
 
         logits = self.fc(self.dropout(hidden))
-        return logits.reshape(-1)
+        return logits
 
 
 class PositionalEncoding(nn.Module):
@@ -275,7 +289,13 @@ class TransformerEncoder(nn.Module):
         self.fc = nn.Linear(embedding_dim, output_dim)
         self.pad_idx = pad_idx
 
-    def forward(self, text, attention_mask=None):
+    def forward(self, text=None, attention_mask=None, input_ids=None):
+        if text is None:
+            text = input_ids
+        if text is None:
+            raise ValueError("TransformerEncoder.forward expected `text` or `input_ids`.")
+        if text.dim() == 0:
+            text = text.unsqueeze(0)
         if text.dim() == 1:
             text = text.unsqueeze(0)
             if attention_mask is not None and attention_mask.dim() == 1:
@@ -299,7 +319,7 @@ class TransformerEncoder(nn.Module):
         mask = attention_mask.unsqueeze(-1).float()
         pooled = (encoded * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
         logits = self.fc(self.dropout(pooled))
-        return logits.reshape(-1)
+        return logits
 
 
 def _resolve_data_path(data_path, data_type):
@@ -360,6 +380,7 @@ def load_and_preprocess_data(data_path, data_type="train", model_type="lstm", sh
         vocab: Vocabulary object (only returned for train data)
     """
 
+    model_type = normalize_model_type(model_type)
     parquet_path = _resolve_data_path(data_path, data_type)
     dataframe = pd.read_parquet(parquet_path).copy()
 
@@ -431,6 +452,7 @@ def load_and_preprocess_data(data_path, data_type="train", model_type="lstm", sh
 
 
 def train(model, iterator, optimizer, criterion, device, model_type="lstm"):
+    model_type = normalize_model_type(model_type)
     model.train()
     epoch_loss = 0.0
     correct = 0
@@ -449,9 +471,9 @@ def train(model, iterator, optimizer, criterion, device, model_type="lstm"):
 
         optimizer.zero_grad()
         if model_type == "transformer":
-            predictions = model(text, attention_mask)
+            predictions = model(text, attention_mask).squeeze(-1)
         else:
-            predictions = model(text)
+            predictions = model(text).squeeze(-1)
         loss = criterion(predictions, labels)
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
@@ -468,6 +490,7 @@ def train(model, iterator, optimizer, criterion, device, model_type="lstm"):
 
 
 def evaluate(model, iterator, criterion, device, model_type="lstm"):
+    model_type = normalize_model_type(model_type)
     model.eval()
     epoch_loss = 0.0
     correct = 0
@@ -486,9 +509,9 @@ def evaluate(model, iterator, criterion, device, model_type="lstm"):
                 labels = labels.to(device)
 
             if model_type == "transformer":
-                predictions = model(text, attention_mask)
+                predictions = model(text, attention_mask).squeeze(-1)
             else:
-                predictions = model(text)
+                predictions = model(text).squeeze(-1)
             loss = criterion(predictions, labels)
 
             epoch_loss += loss.item()
@@ -502,6 +525,7 @@ def evaluate(model, iterator, criterion, device, model_type="lstm"):
 
 
 def build_model(model_type, vocab, device):
+    model_type = normalize_model_type(model_type)
     if model_type == "transformer":
         model = TransformerEncoder(
             vocab_size=vocab.size,
@@ -531,7 +555,7 @@ def main():
 
     data_path = "hw5_data_train.parquet"
     device = get_runtime_device()
-    model_type = sys.argv[1].strip().lower() if len(sys.argv) > 1 else "lstm"
+    model_type = normalize_model_type(sys.argv[1] if len(sys.argv) > 1 else "lstm")
     if model_type not in {"lstm", "transformer"}:
         raise ValueError("model_type must be 'lstm' or 'transformer'. Example: python3 hw5_ske.py lstm")
 
