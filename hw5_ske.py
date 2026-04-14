@@ -21,16 +21,26 @@ except ImportError:
 
 SEED = 42
 MAX_VOCAB_SIZE = 20000
-MAX_LEN = 300
-BATCH_SIZE = 64
-EMBEDDING_DIM = 200
-HIDDEN_DIM = 256
+MAX_LEN = 400
+BATCH_SIZE = 32
+EMBEDDING_DIM = 300
+HIDDEN_DIM = 512
 NUM_LAYERS = 2
-DROPOUT = 0.4
+TRANSFORMER_HEADS = 6
+DROPOUT = 0.3
 LEARNING_RATE = 5e-4
-NUM_EPOCHS = 8
-TRAIN_SPLIT = 0.8
+WEIGHT_DECAY = 1e-5
+NUM_EPOCHS = 12
+TRAIN_SPLIT = 0.9
 GRAD_CLIP = 1.0
+TRANSFORMER_BATCH_SIZE = 24
+TRANSFORMER_EMBEDDING_DIM = 256
+TRANSFORMER_HIDDEN_DIM = 512
+TRANSFORMER_NUM_LAYERS = 4
+TRANSFORMER_DROPOUT = 0.2
+TRANSFORMER_LEARNING_RATE = 2e-4
+TRANSFORMER_WEIGHT_DECAY = 1e-4
+TRANSFORMER_EPOCHS = 14
 
 
 def require_gpu_device():
@@ -244,7 +254,7 @@ class TransformerEncoder(nn.Module):
         self,
         vocab_size,
         embedding_dim,
-        n_heads=4,
+        n_heads=TRANSFORMER_HEADS,
         hidden_dim=256,
         num_layers=2,
         dropout=0.1,
@@ -263,6 +273,7 @@ class TransformerEncoder(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(embedding_dim)
         self.fc = nn.Linear(embedding_dim, output_dim)
         self.pad_idx = pad_idx
 
@@ -277,8 +288,14 @@ class TransformerEncoder(nn.Module):
             self.positional_encoding(self.dropout(embedded)),
             src_key_padding_mask=src_key_padding_mask,
         )
-        cls_representation = encoded[:, 0, :]
-        logits = self.fc(self.dropout(cls_representation))
+        encoded = self.norm(encoded)
+
+        if attention_mask is None:
+            attention_mask = text.ne(self.pad_idx).long()
+
+        mask = attention_mask.unsqueeze(-1).float()
+        pooled = (encoded * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
+        logits = self.fc(self.dropout(pooled))
         return logits.squeeze(1)
 
 
@@ -400,7 +417,7 @@ def load_and_preprocess_data(data_path, data_type="train", model_type="lstm", sh
 
     data_loader = DataLoader(
         dataset,
-        batch_size=BATCH_SIZE,
+        batch_size=TRANSFORMER_BATCH_SIZE if model_type == "transformer" else BATCH_SIZE,
         shuffle=data_type == "train",
         num_workers=0,
     )
@@ -485,10 +502,11 @@ def build_model(model_type, vocab, device):
     if model_type == "transformer":
         model = TransformerEncoder(
             vocab_size=vocab.size,
-            embedding_dim=EMBEDDING_DIM,
-            hidden_dim=HIDDEN_DIM,
-            num_layers=NUM_LAYERS,
-            dropout=DROPOUT,
+            embedding_dim=TRANSFORMER_EMBEDDING_DIM,
+            n_heads=TRANSFORMER_HEADS,
+            hidden_dim=TRANSFORMER_HIDDEN_DIM,
+            num_layers=TRANSFORMER_NUM_LAYERS,
+            dropout=TRANSFORMER_DROPOUT,
             pad_idx=vocab.word2idx["<pad>"],
         )
     else:
@@ -527,11 +545,20 @@ def main():
 
     model = build_model(model_type, vocab, device)
 
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    if model_type == "transformer":
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=TRANSFORMER_LEARNING_RATE,
+            weight_decay=TRANSFORMER_WEIGHT_DECAY,
+        )
+        num_epochs = TRANSFORMER_EPOCHS
+    else:
+        optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+        num_epochs = NUM_EPOCHS
     criterion = nn.BCEWithLogitsLoss()
 
     best_valid_accuracy = 0.0
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(num_epochs):
         train_loss, train_accuracy = train(model, train_loader, optimizer, criterion, device, model_type=model_type)
         valid_loss, valid_accuracy = evaluate(model, valid_loader, criterion, device, model_type=model_type)
 
@@ -540,7 +567,7 @@ def main():
             torch.save(model.state_dict(), checkpoint_path)
 
         print(
-            f"Epoch {epoch + 1}/{NUM_EPOCHS} | "
+            f"Epoch {epoch + 1}/{num_epochs} | "
             f"Train Loss: {train_loss:.4f} | Train Acc: {train_accuracy:.4f} | "
             f"Valid Loss: {valid_loss:.4f} | Valid Acc: {valid_accuracy:.4f}"
         )
