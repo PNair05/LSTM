@@ -26,7 +26,7 @@ BATCH_SIZE = 32
 EMBEDDING_DIM = 300
 HIDDEN_DIM = 512
 NUM_LAYERS = 2
-TRANSFORMER_HEADS = 6
+TRANSFORMER_HEADS = 8
 DROPOUT = 0.3
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY = 1e-5
@@ -108,7 +108,7 @@ class Vocabulary:
     Build a vocabulary from word counts.
     """
 
-    def __init__(self, max_size):
+    def __init__(self, max_size=MAX_VOCAB_SIZE):
         self.max_size = max_size
         self.word2idx = {"<pad>": 0, "<unk>": 1, "<cls>": 2}
         self.idx2word = {0: "<pad>", 1: "<unk>", 2: "<cls>"}
@@ -175,19 +175,19 @@ class IMDBDataset(Dataset):
 
         label_tensor = torch.tensor(float(self.labels[idx]), dtype=torch.float32)
         if self.model_type == "transformer":
-            return text_tensor, attention_mask, label_tensor
+            return text_tensor, label_tensor, attention_mask
         return text_tensor, label_tensor
 
 
 class LSTM(nn.Module):
     def __init__(
         self,
-        vocab_size,
-        embedding_dim,
-        hidden_dim,
+        vocab_size=MAX_VOCAB_SIZE,
+        embedding_dim=EMBEDDING_DIM,
+        hidden_dim=HIDDEN_DIM,
         output_dim=1,
-        num_layers=1,
-        dropout=0.5,
+        num_layers=NUM_LAYERS,
+        dropout=DROPOUT,
         pad_idx=0,
         bidirectional=True,
     ):
@@ -252,12 +252,12 @@ class PositionalEmbedding(PositionalEncoding):
 class TransformerEncoder(nn.Module):
     def __init__(
         self,
-        vocab_size,
-        embedding_dim,
+        vocab_size=MAX_VOCAB_SIZE,
+        embedding_dim=TRANSFORMER_EMBEDDING_DIM,
         n_heads=TRANSFORMER_HEADS,
-        hidden_dim=256,
-        num_layers=2,
-        dropout=0.1,
+        hidden_dim=TRANSFORMER_HIDDEN_DIM,
+        num_layers=TRANSFORMER_NUM_LAYERS,
+        dropout=TRANSFORMER_DROPOUT,
         output_dim=1,
         pad_idx=0,
     ):
@@ -435,10 +435,10 @@ def train(model, iterator, optimizer, criterion, device, model_type="lstm"):
 
     for batch in tqdm(iterator, desc=f"Training {model_type}", leave=False):
         if model_type == "transformer":
-            text, attention_mask, labels = batch
+            text, labels, attention_mask = batch
             text = text.to(device)
-            attention_mask = attention_mask.to(device)
             labels = labels.to(device)
+            attention_mask = attention_mask.to(device)
         else:
             text, labels = batch
             text = text.to(device)
@@ -473,10 +473,10 @@ def evaluate(model, iterator, criterion, device, model_type="lstm"):
     with torch.no_grad():
         for batch in tqdm(iterator, desc=f"Evaluating {model_type}", leave=False):
             if model_type == "transformer":
-                text, attention_mask, labels = batch
+                text, labels, attention_mask = batch
                 text = text.to(device)
-                attention_mask = attention_mask.to(device)
                 labels = labels.to(device)
+                attention_mask = attention_mask.to(device)
             else:
                 text, labels = batch
                 text = text.to(device)
