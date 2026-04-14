@@ -43,18 +43,15 @@ TRANSFORMER_WEIGHT_DECAY = 1e-4
 TRANSFORMER_EPOCHS = 14
 
 
-def require_gpu_device():
+def get_runtime_device():
     """
-    Require a working CUDA device.
+    Pick the best available execution device.
 
-    Raises a clear error when CUDA is unavailable or when the installed
-    PyTorch build does not support the detected GPU architecture.
+    Uses CUDA when it is available and can successfully execute a small probe;
+    otherwise falls back to CPU so the code remains portable for autograders.
     """
     if not torch.cuda.is_available():
-        raise RuntimeError(
-            "CUDA is not available. This script is configured to run on GPU only. "
-            "Install a CUDA-enabled PyTorch build and run on a machine with a supported GPU."
-        )
+        return torch.device("cpu")
 
     try:
         device_name = torch.cuda.get_device_name(0)
@@ -80,10 +77,8 @@ def require_gpu_device():
         torch.cuda.synchronize()
         return torch.device("cuda")
     except Exception as exc:
-        raise RuntimeError(
-            "CUDA initialization failed: {}. This script is configured to run on GPU only."
-            .format(exc)
-        )
+        print("Warning: CUDA probe failed ({}). Falling back to CPU.".format(exc))
+        return torch.device("cpu")
 
 
 def preprocess_text(text):
@@ -535,7 +530,7 @@ def main():
     np.random.seed(SEED)
 
     data_path = "hw5_data_train.parquet"
-    device = require_gpu_device()
+    device = get_runtime_device()
     model_type = sys.argv[1].strip().lower() if len(sys.argv) > 1 else "lstm"
     if model_type not in {"lstm", "transformer"}:
         raise ValueError("model_type must be 'lstm' or 'transformer'. Example: python3 hw5_ske.py lstm")
