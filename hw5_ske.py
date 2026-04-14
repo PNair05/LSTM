@@ -21,15 +21,16 @@ except ImportError:
 
 SEED = 42
 MAX_VOCAB_SIZE = 20000
-MAX_LEN = 200
+MAX_LEN = 300
 BATCH_SIZE = 64
-EMBEDDING_DIM = 128
+EMBEDDING_DIM = 200
 HIDDEN_DIM = 256
 NUM_LAYERS = 2
-DROPOUT = 0.5
-LEARNING_RATE = 1e-3
-NUM_EPOCHS = 3
+DROPOUT = 0.4
+LEARNING_RATE = 5e-4
+NUM_EPOCHS = 8
 TRAIN_SPLIT = 0.8
+GRAD_CLIP = 1.0
 
 
 def require_gpu_device():
@@ -433,6 +434,7 @@ def train(model, iterator, optimizer, criterion, device, model_type="lstm"):
             predictions = model(text)
         loss = criterion(predictions, labels)
         loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         optimizer.step()
 
         epoch_loss += loss.item()
