@@ -51,16 +51,20 @@ def require_gpu_device():
         arch_list = torch.cuda.get_arch_list() if hasattr(torch.cuda, "get_arch_list") else []
 
         if arch_list and device_arch not in arch_list:
-            raise RuntimeError(
-                "CUDA device '{}' uses architecture {}, but this PyTorch build only supports {}. "
-                "Install a newer CUDA-enabled PyTorch build for this GPU."
+            print(
+                "Warning: CUDA device '{}' uses architecture {}, while this PyTorch build reports support for {}. "
+                "Proceeding with a runtime CUDA/LSTM probe."
                 .format(device_name, device_arch, ", ".join(arch_list))
             )
 
-        # Trigger a lightweight CUDA operation so we can catch runtime issues
-        # before moving the model.
-        test_tensor = torch.zeros(1, device="cuda")
-        _ = test_tensor + 1
+        # Validate the actual runtime instead of relying only on the reported
+        # architecture list, which can be conservative on some cluster builds.
+        test_tensor = torch.randn(2, 2, device="cuda")
+        _ = test_tensor @ test_tensor.t()
+
+        lstm_probe = nn.LSTM(input_size=4, hidden_size=4, batch_first=True).to("cuda")
+        probe_input = torch.randn(1, 3, 4, device="cuda")
+        _ = lstm_probe(probe_input)
         torch.cuda.synchronize()
         return torch.device("cuda")
     except Exception as exc:
