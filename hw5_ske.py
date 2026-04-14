@@ -207,6 +207,9 @@ class LSTM(nn.Module):
         self.pad_idx = pad_idx
 
     def forward(self, text):
+        if text.dim() == 1:
+            text = text.unsqueeze(0)
+
         embedded = self.dropout(self.embedding(text))
         lengths = text.ne(self.pad_idx).sum(dim=1).cpu()
         lengths = torch.clamp(lengths, min=1)
@@ -225,7 +228,7 @@ class LSTM(nn.Module):
             hidden = hidden[-1]
 
         logits = self.fc(self.dropout(hidden))
-        return logits.squeeze(1)
+        return logits.reshape(-1)
 
 
 class PositionalEncoding(nn.Module):
@@ -278,6 +281,11 @@ class TransformerEncoder(nn.Module):
         self.pad_idx = pad_idx
 
     def forward(self, text, attention_mask=None):
+        if text.dim() == 1:
+            text = text.unsqueeze(0)
+            if attention_mask is not None and attention_mask.dim() == 1:
+                attention_mask = attention_mask.unsqueeze(0)
+
         if attention_mask is None:
             src_key_padding_mask = text.eq(self.pad_idx)
         else:
@@ -296,7 +304,7 @@ class TransformerEncoder(nn.Module):
         mask = attention_mask.unsqueeze(-1).float()
         pooled = (encoded * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
         logits = self.fc(self.dropout(pooled))
-        return logits.squeeze(1)
+        return logits.reshape(-1)
 
 
 def _resolve_data_path(data_path, data_type):
