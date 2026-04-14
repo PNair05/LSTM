@@ -31,6 +31,45 @@ NUM_EPOCHS = 3
 TRAIN_SPLIT = 0.8
 
 
+def require_gpu_device():
+    """
+    Require a working CUDA device.
+
+    Raises a clear error when CUDA is unavailable or when the installed
+    PyTorch build does not support the detected GPU architecture.
+    """
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is not available. This script is configured to run on GPU only. "
+            "Install a CUDA-enabled PyTorch build and run on a machine with a supported GPU."
+        )
+
+    try:
+        device_name = torch.cuda.get_device_name(0)
+        capability = torch.cuda.get_device_capability(0)
+        device_arch = "sm_{}{}".format(capability[0], capability[1])
+        arch_list = torch.cuda.get_arch_list() if hasattr(torch.cuda, "get_arch_list") else []
+
+        if arch_list and device_arch not in arch_list:
+            raise RuntimeError(
+                "CUDA device '{}' uses architecture {}, but this PyTorch build only supports {}. "
+                "Install a newer CUDA-enabled PyTorch build for this GPU."
+                .format(device_name, device_arch, ", ".join(arch_list))
+            )
+
+        # Trigger a lightweight CUDA operation so we can catch runtime issues
+        # before moving the model.
+        test_tensor = torch.zeros(1, device="cuda")
+        _ = test_tensor + 1
+        torch.cuda.synchronize()
+        return torch.device("cuda")
+    except Exception as exc:
+        raise RuntimeError(
+            "CUDA initialization failed: {}. This script is configured to run on GPU only."
+            .format(exc)
+        )
+
+
 def preprocess_text(text):
     """
     Clean and tokenize text.
@@ -430,7 +469,7 @@ def main():
     np.random.seed(SEED)
 
     data_path = "hw5_data_train.parquet"
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = require_gpu_device()
     model_type = "lstm"
 
     print(f"Using device: {device}")
