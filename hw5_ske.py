@@ -111,18 +111,33 @@ class Vocabulary:
     """
 
     def __init__(self, max_size=MAX_VOCAB_SIZE):
-        self.max_size = max_size
-        self.word2idx = {"<pad>": 0, "<unk>": 1, "<cls>": 2}
-        self.idx2word = {0: "<pad>", 1: "<unk>", 2: "<cls>"}
+        self.special_tokens = ["<pad>", "<unk>", "<cls>"]
+        self.max_size = max(int(max_size), len(self.special_tokens)) if max_size is not None else MAX_VOCAB_SIZE
+        self.word2idx = {token: idx for idx, token in enumerate(self.special_tokens)}
+        self.idx2word = {idx: token for idx, token in enumerate(self.special_tokens)}
         self.word_count = {}
-        self.size = 3
+        self.size = len(self.special_tokens)
 
     def add_word(self, word):
+        if not isinstance(word, str):
+            return
+        word = word.strip()
+        if not word or word in self.special_tokens:
+            return
         self.word_count[word] = self.word_count.get(word, 0) + 1
 
     def build_vocab(self):
+        # Rebuild from counts each time so repeated calls remain deterministic.
+        self.word2idx = {token: idx for idx, token in enumerate(self.special_tokens)}
+        self.idx2word = {idx: token for idx, token in enumerate(self.special_tokens)}
+        self.size = len(self.special_tokens)
+
         sorted_words = sorted(
-            self.word_count.items(),
+            (
+                (word, count)
+                for word, count in self.word_count.items()
+                if word not in self.special_tokens
+            ),
             key=lambda item: (-item[1], item[0]),
         )
 
@@ -298,8 +313,37 @@ class TransformerEncoder(nn.Module):
             text = text.unsqueeze(0)
         if text.dim() == 1:
             text = text.unsqueeze(0)
-            if attention_mask is not None and attention_mask.dim() == 1:
-                attention_mask = attention_mask.unsqueeze(0)
+
+        if attention_mask is not None:
+            if attention_mask.dim() == 0:
+                attention_mask = attention_mask.unsqueeze(0).unsqueeze(0)
+            elif attention_mask.dim() == 1:
+                # Accept either sequence-length masks or batch-level masks.
+                if attention_mask.size(0) == text.size(1):
+                    attention_mask = attention_mask.unsqueeze(0).expand(text.size(0), -1)
+                elif attention_mask.size(0) == text.size(0):
+                    attention_mask = attention_mask.unsqueeze(1).expand(-1, text.size(1))
+                else:
+                    raise ValueError(
+                        "attention_mask length must match batch size or sequence length. "
+                        f"Got mask length {attention_mask.size(0)} for text shape {tuple(text.shape)}."
+                    )
+            elif attention_mask.dim() == 2:
+                if attention_mask.size(0) == 1 and text.size(0) > 1:
+                    attention_mask = attention_mask.expand(text.size(0), -1)
+                if attention_mask.size(1) == 1 and text.size(1) > 1:
+                    attention_mask = attention_mask.expand(-1, text.size(1))
+            else:
+                raise ValueError("attention_mask must be 0D, 1D, or 2D.")
+
+            if attention_mask.dim() != 2:
+                raise ValueError("Padding mask should be 2D")
+
+            if attention_mask.size(0) != text.size(0) or attention_mask.size(1) != text.size(1):
+                raise ValueError(
+                    "attention_mask shape must match input_ids shape. "
+                    f"Got mask shape {tuple(attention_mask.shape)} for text shape {tuple(text.shape)}."
+                )
 
         if attention_mask is None:
             src_key_padding_mask = text.eq(self.pad_idx)
