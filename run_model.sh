@@ -5,11 +5,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${SCRIPT_DIR}/.venv"
 MODEL_TYPE="${1:-lstm}"
+TARGET_DIR="/scratch/user/pranav1014/LSTM"
 
-cd "${SCRIPT_DIR}"
+if [[ -d "${TARGET_DIR}" ]]; then
+  cd "${TARGET_DIR}"
+else
+  cd "${SCRIPT_DIR}"
+fi
 
 if [[ "${MODEL_TYPE}" != "lstm" && "${MODEL_TYPE}" != "transformer" ]]; then
   echo "Usage: ./run_model.sh [lstm|transformer]"
+  echo "Example:"
+  echo "  cd /scratch/user/pranav1014/LSTM"
+  echo "  ./run_model.sh lstm"
   exit 1
 fi
 
@@ -59,12 +67,24 @@ import torch
 if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
     print("No CUDA GPU is available in this shell.")
     print("Start a Grace GPU shell first, for example:")
-    print("  srun --partition=gpu --nodes=1 --ntasks=1 --cpus-per-task=4 --mem=16G --gres=gpu:t4:1 --time=01:00:00 --pty bash")
+    print("  srun --partition=gpu --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=32G --gres=gpu:a100:1 --time=01:00:00 --pty bash")
     sys.exit(1)
 
 print("CUDA available:", torch.cuda.is_available())
 print("GPU count:", torch.cuda.device_count())
-print("GPU name:", torch.cuda.get_device_name(0))
+gpu_name = torch.cuda.get_device_name(0)
+print("GPU name:", gpu_name)
+
+try:
+    probe = torch.randn(2, 2, device="cuda")
+    _ = probe @ probe.t()
+    torch.cuda.synchronize()
+except Exception as exc:
+    print("CUDA runtime probe failed on this GPU:", exc)
+    print("If you are targeting an A100, your environment likely needs a newer CUDA-enabled PyTorch build.")
+    print("Example A100 shell:")
+    print("  srun --partition=gpu --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=32G --gres=gpu:a100:1 --time=01:00:00 --pty bash")
+    sys.exit(1)
 PY
 
 exec python3 hw5_ske.py "${MODEL_TYPE}"
