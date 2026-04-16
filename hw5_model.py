@@ -16,7 +16,6 @@ import re
 from tqdm import tqdm
 import math
 
-
 SEED = 42
 TRAIN_SPLIT = 0.9
 
